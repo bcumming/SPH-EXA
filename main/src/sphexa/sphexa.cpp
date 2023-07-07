@@ -51,6 +51,8 @@
 
 #include "insitu_viz.h"
 
+#include "pm_counters.h"
+
 #ifdef USE_CUDA
 using AccType = cstone::GpuTag;
 #else
@@ -107,9 +109,9 @@ int main(int argc, char** argv)
     Dataset simData;
     simData.comm = MPI_COMM_WORLD;
 
-    Timer totalTimer(output);
+    Timer initTimer(output);
     MPI_Barrier(MPI_COMM_WORLD);
-    totalTimer.start();
+    initTimer.start();
 
     propagator->activateFields(simData);
     propagator->load(initCond, simData.comm);
@@ -137,7 +139,16 @@ int main(int argc, char** argv)
 
     viz::init_catalyst(argc, argv);
     viz::init_ascent(d, domain.startIndex());
+    if (rank == 0)
+    {
+        initTimer.step("Total initialization time");
+    }
 
+    Timer totalTimer(output);
+    MPI_Barrier(MPI_COMM_WORLD);
+    auto starte = read_energy();
+    if (rank == 0) std::cout << "##BEGIN-TIMESTEPPING##" << std::endl;
+    totalTimer.start();
     size_t startIteration = d.iteration;
     for (; !stopSimulation(d.iteration - 1, d.ttot, maxStepStr); d.iteration++)
     {
@@ -172,11 +183,19 @@ int main(int argc, char** argv)
             break;
         }
     }
+    MPI_Barrier(MPI_COMM_WORLD);
+    if (rank == 0) std::cout << "##END-TIMESTEPPING##" << std::endl;
 
     if (rank == 0)
     {
-        totalTimer.step("Total execution time of " + std::to_string(d.iteration - startIteration) + " iterations of " +
-                        initCond + " up to t = " + std::to_string(d.ttot));
+        auto stope = read_energy();
+        totalTimer.step("Total execution time of "
+                        + std::to_string(d.iteration - startIteration)
+                        + " iterations of "
+                        + initCond
+                        + " up to t = "
+                        + std::to_string(d.ttot));
+        power(starte, stope);
     }
 
     constantsFile.close();
